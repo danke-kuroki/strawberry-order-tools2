@@ -487,19 +487,11 @@ function viewInfo(){
 
 function viewDone(){
   const txt = orderText();
-  const line = CONFIG.lineOaId
-    ? `https://line.me/R/oaMessage/${encodeURIComponent(CONFIG.lineOaId)}/?${encodeURIComponent(txt)}`
-    : `https://line.me/R/msg/text/?${encodeURIComponent(txt)}`;
-  const mail = CONFIG.email
-    ? `mailto:${CONFIG.email}?subject=${encodeURIComponent("いちご予約 受付番号"+S.orderNo)}&body=${encodeURIComponent(txt)}` : "";
   return `<div class="done-card panel">
-    <p style="margin:0;color:var(--sub)">受付番号</p>
-    <div class="num">${S.orderNo}</div>
-    <div class="must"><b>まだ予約は完了していません。</b><br>下のボタンから注文内容をお店に送ってください。送信をもってご予約完了です。</div>
-    <a class="btn line" href="${line}" target="_blank" rel="noopener">LINEでお店に送る</a>
-    ${mail ? `<a class="btn ghost" href="${mail}">メールで送る</a>` : ""}
-    <button class="btn ghost" id="copy">注文内容をコピー</button>
+    <h2 style="margin-top:0">仮予約を受け付けました</h2>
+    <div class="must"><b>まだ予約は完了していません。</b><br>のちほど在庫状況等を確認し、公式LINEより連絡をいたします。しばらくお待ちください。</div>
     <pre class="txt" id="txt">${esc(txt)}</pre>
+    <button class="btn ghost" id="copy">仮予約の内容をコピー</button>
     <button class="back" id="restart">新しく予約する</button>
   </div>`;
 }
@@ -551,8 +543,8 @@ function next(){
 
 /* ---------- 確認 ---------- */
 function openConfirm(){
-  $("#sheet").innerHTML = `<h2 id="mTitle">この内容で予約しますか？</h2>
-    <p class="hint">確定すると受付番号を発行します。</p>
+  $("#sheet").innerHTML = `<h2 id="mTitle">この内容で仮予約しますか？</h2>
+    <p class="hint">在庫状況等を確認のうえ、公式LINEよりご連絡します。</p>
     <div class="when" style="margin-top:12px"><span class="chip ok">${jpDate(S.date)}</span><span class="chip ok">${esc(S.slot)}</span></div>
     <ul class="lines">${items().map(p => `<li><span>${esc(p.name)} × ${S.qty[p.id]}</span><span>${yen(p.price*S.qty[p.id])}</span></li>`).join("")}</ul>
     <div class="total"><span>合計（${count()}点）</span><b>${yen(total())}</b></div>
@@ -564,13 +556,12 @@ function openConfirm(){
     </dl>
     <div class="row">
       <button class="btn ghost" id="mBack" style="flex:1">戻る</button>
-      <button class="btn" id="mOk" style="flex:2">予約を確定する</button>
+      <button class="btn" id="mOk" style="flex:2">仮予約する</button>
     </div>`;
   $("#modal").classList.add("open");
   $("#mOk").focus();
   $("#mBack").onclick = closeConfirm;
   $("#mOk").onclick = () => {
-    S.orderNo = String(Math.floor(100000 + Math.random()*900000));
     closeConfirm(); S.step = 4; render(); window.scrollTo({top:0});
   };
 }
@@ -580,7 +571,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeConfirm
 
 function orderText(){
   return [
-    `【いちご予約】受付番号 ${S.orderNo}`,
+    "【いちご仮予約】",
     `受取日時：${jpDate(S.date)} ${S.slot}`,
     ...items().map(p => `・${p.name} × ${S.qty[p.id]}（${yen(p.price*S.qty[p.id])}）`),
     `合計：${yen(total())}（${count()}点）`,
