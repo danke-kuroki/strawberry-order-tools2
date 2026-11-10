@@ -282,6 +282,11 @@ pre.txt{white-space:pre-wrap;text-align:left;background:var(--muted);border-radi
 .subrow{display:flex;justify-content:space-between;font-size:14px;padding:6px 0}
 .subrow.muted{color:var(--sub);font-size:13px}
 .notes{font-size:13px;color:var(--sub);margin:12px 0 0;padding-left:0;list-style:none}
+.ziprow{display:flex;gap:8px;align-items:stretch}
+.ziprow input{flex:1;min-width:0}
+.zipbtn{flex:none;border:2px solid var(--leaf);background:var(--paper);color:var(--leaf);border-radius:12px;padding:0 14px;font-weight:700;font-size:14px;cursor:pointer}
+.zipbtn:disabled{opacity:.5;cursor:default}
+.addrbox{border-left:4px solid var(--leaf-soft);padding-left:12px;margin-bottom:16px}
 </style>
 </head>
 <body>
@@ -363,8 +368,15 @@ const CONFIG = {
 
   payNote: "",   // お支払い方法の案内（空なら表示しません）
 
+  // 数量を入れ始めたときに注意を出す規格（あまおう・白いちご共通）
+  lateGrades: ["2L","L","M","S"],
+  lateNote: "2L～S規格は年明け以降の発送となる見込みです。あらかじめご了承ください。",
+
   // 受注を書き込むスプレッドシートの送信先（Apps Script のウェブアプリURL）
   sheetEndpoint: "https://script.google.com/macros/s/AKfycbzIGeQlb9U3IZWKYJy1kmgNaheFRy8M5wLqliMFigIno8zBDvQ5c7jzZCi45_j6jbH1/exec",
+
+  // 公式LINEのID（友だち追加ボタンに使います）
+  lineOaId: "@607dzdfb",
   taxRate: "8%",
 };
 
@@ -419,6 +431,7 @@ const ALL = CONFIG.groups.flatMap(g => g.items.map(it => ({...it, group:g})));
 const S = {
   step:1, qty:{}, date:null, slot:null, note:"",
   first:"", name:"", phone:"", line:"", email:"", pref:"", agree:false,
+  zip:"", addr1:"", addr2:"",
   month:new Date(firstDay.getFullYear(), firstDay.getMonth(), 1), tried:false
 };
 ALL.forEach(it => S.qty[it.id] = 0);
@@ -648,6 +661,30 @@ function viewInfo(){
       <input id="fLine" value="${esc(S.line)}" placeholder="LINEで表示されているお名前">
       <div class="err">初めての方はLINEの表示名を入力してください</div>
     </div>
+    ${isFirst ? `<div class="notice" style="margin:-4px 0 16px">
+      ご予約の確認は公式LINEからご連絡します。まだの方は、友だち追加をお願いします。
+      <a class="btn line" href="${lineAddUrl()}" target="_blank" rel="noopener" style="margin-top:10px">公式LINEを友だち追加</a>
+    </div>
+    <div class="addrbox">
+      <div class="field">
+        <label for="fZip">郵便番号<span class="opt">任意</span></label>
+        <div class="ziprow">
+          <input id="fZip" inputmode="numeric" autocomplete="postal-code" maxlength="8" value="${esc(S.zip)}" placeholder="123-4567">
+          <button type="button" class="zipbtn" id="zipBtn">住所を検索</button>
+        </div>
+        <div class="help" id="zipMsg" aria-live="polite">7桁を入力すると、住所を自動で入力します。</div>
+      </div>
+      <div class="field ${bad("addr1")}">
+        <label for="fAddr1">住所<span class="req">必須</span></label>
+        <input id="fAddr1" autocomplete="address-level1" value="${esc(S.addr1)}" placeholder="福岡県〇〇市〇〇町">
+        <div class="err">初めての方は住所を入力してください</div>
+      </div>
+      <div class="field ${bad("addr2")}" style="margin-bottom:0">
+        <label for="fAddr2">番地・建物名<span class="req">必須</span></label>
+        <input id="fAddr2" autocomplete="address-line2" value="${esc(S.addr2)}" placeholder="1-2-3 〇〇ビル101">
+        <div class="err">番地を入力してください</div>
+      </div>
+    </div>` : ""}
     <div class="field ${bad("email")}">
       <label for="fEmail">メールアドレス<span class="opt">任意</span></label>
       <input id="fEmail" type="email" autocomplete="email" value="${esc(S.email)}" placeholder="example@mail.com">
@@ -673,6 +710,8 @@ function viewDone(){
   return `<div class="done-card panel">
     <h2 style="margin-top:0">仮予約を受け付けました</h2>
     <div class="must"><b>まだ予約は完了していません。</b><br>のちほど在庫状況等を確認し、公式LINEより連絡をいたします。しばらくお待ちください。</div>
+    <p style="margin:16px 0 0;font-size:14px;text-align:left">公式LINEをまだ友だち追加されていない方は、こちらから追加をお願いします。友だち追加がないと、こちらからご連絡できません。</p>
+    <a class="btn line" href="${lineAddUrl()}" target="_blank" rel="noopener">公式LINEを友だち追加</a>
     <pre class="txt" id="txt">${esc(txt)}</pre>
     <button class="btn ghost" id="copy">仮予約の内容をコピー</button>
     <button class="back" id="restart">新しく予約する</button>
@@ -724,6 +763,8 @@ function valid(){
     name: S.name.trim().length > 0,
     phone: ph ? /^\d{10,11}$/.test(normPhone(ph)) : !first,
     line: first ? S.line.trim().length > 0 : true,
+    addr1: first ? S.addr1.trim().length > 0 : true,
+    addr2: first ? S.addr2.trim().length > 0 : true,
     email: !S.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(S.email.trim()),
     agree: S.agree
   };
@@ -765,6 +806,7 @@ function openConfirm(){
       <dt>お名前</dt><dd>${esc(S.name)}</dd>
       ${S.phone?`<dt>電話番号</dt><dd>${esc(S.phone)}</dd>`:""}
       ${S.line?`<dt>LINE表示名</dt><dd>${esc(S.line)}</dd>`:""}
+      ${addrText()?`<dt>住所</dt><dd>${esc(addrText())}</dd>`:""}
       ${S.email?`<dt>メール</dt><dd>${esc(S.email)}</dd>`:""}
       ${S.pref?`<dt>お渡し先</dt><dd>${esc(S.pref)}</dd>`:""}
       ${S.note?`<dt>ご要望</dt><dd>${esc(S.note)}</dd>`:""}
@@ -806,16 +848,15 @@ function sheetPayload(){
     if (it.grade === "2L") return add("白2L", it.price, q);
     return add("白L～S", it.price, q);
   });
-  const memo = [
-    "フォーム受付",
-    S.first === "yes" ? "初めて" : "2回目以降",
-    S.line ? `LINE：${S.line}` : "",
+  // 備考：初めての方は電話番号・LINE表示名・ご要望、2回目以降の方はご要望のみ
+  const memo = (S.first === "yes" ? [
     S.phone ? `TEL：${S.phone}` : "",
-    S.email ? `メール：${S.email}` : "",
-    S.pref ? `お渡し先：${S.pref}` : "お渡し先：未入力",
-    mixedTemp() ? "生果・冷凍は別便" : "",
-    S.note ? `ご要望：${S.note}` : ""
-  ].filter(Boolean).join("／");
+    S.line ? `LINE：${S.line}` : "",
+    addrText() ? `住所：${addrText()}` : "",
+    S.note ? `ご要望・お問い合わせ：${S.note}` : ""
+  ] : [
+    S.note ? `ご要望・お問い合わせ：${S.note}` : ""
+  ]).filter(Boolean).join("／");
   return {
     name: S.name,
     cols,
@@ -837,6 +878,63 @@ async function sendToSheet(){
     body: JSON.stringify(sheetPayload())
   });
 }
+/* ---------- 郵便番号から住所を自動入力（zipcloud） ---------- */
+const normZip = z => String(z).replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0)-65248)).replace(/[^0-9]/g, "");
+const addrText = () => {
+  if (S.first !== "yes") return "";
+  const z = normZip(S.zip);
+  return [z.length === 7 ? `〒${z.slice(0,3)}-${z.slice(3)}` : "", S.addr1.trim(), S.addr2.trim()].filter(Boolean).join(" ");
+};
+function lookupZip(zip){
+  return new Promise((resolve, reject) => {
+    const cb = "zipcb_" + Date.now(), s = document.createElement("script");
+    const done = () => { clearTimeout(timer); delete window[cb]; s.remove(); };
+    const timer = setTimeout(() => { done(); reject(new Error("timeout")); }, 7000);
+    window[cb] = data => { done(); resolve(data); };
+    s.onerror = () => { done(); reject(new Error("load")); };
+    s.src = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${zip}&callback=${cb}`;
+    document.head.appendChild(s);
+  });
+}
+let zipBusy = false;
+async function fillAddress(){
+  const zip = normZip(S.zip), msg = $("#zipMsg"), btn = $("#zipBtn");
+  if (zip.length !== 7){ msg.textContent = "郵便番号を7桁で入力してください。"; return; }
+  if (zipBusy) return;
+  zipBusy = true; btn.disabled = true; msg.textContent = "住所を検索しています…";
+  try {
+    const data = await lookupZip(zip);
+    const r = data && data.results && data.results[0];
+    if (!r){ msg.textContent = "該当する住所が見つかりませんでした。住所を直接入力してください。"; return; }
+    S.addr1 = r.address1 + r.address2 + r.address3;
+    $("#fAddr1").value = S.addr1;
+    if (S.tried) $("#fAddr1").closest(".field").classList.remove("bad");
+    if (!S.pref && PREFS.includes(r.address1)){   // お渡し先都道府県が未入力なら一緒に入れる
+      S.pref = r.address1;
+      const pf = $("#fPref"); pf.value = S.pref; pf.classList.remove("empty");
+      renderSummary(); $("#sideNext").onclick = next;
+    }
+    msg.textContent = "住所を入力しました。番地・建物名を続けて入力してください。";
+    $("#fAddr2").focus();
+  } catch {
+    msg.textContent = "住所を自動入力できませんでした。住所を直接入力してください。";
+  } finally {
+    zipBusy = false; btn.disabled = false;
+  }
+}
+
+/* ---------- 公式LINEの友だち追加 ---------- */
+const lineAddUrl = () => `https://line.me/R/ti/p/${encodeURIComponent(CONFIG.lineOaId)}`;
+
+/* ---------- お知らせポップアップ ---------- */
+function showNotice(msg, backTo){
+  $("#sheet").innerHTML = `<h2 id="mTitle" style="font-size:20px">ご注意</h2>
+    <p style="margin:10px 0 0;font-size:16px">${esc(msg)}</p>
+    <button class="btn" id="nOk">了解しました</button>`;
+  $("#modal").classList.add("open");
+  $("#nOk").focus();
+  $("#nOk").onclick = () => { closeConfirm(); backTo && document.querySelector(backTo)?.focus(); };
+}
 function closeConfirm(){ $("#modal").classList.remove("open"); }
 $("#modal").addEventListener("click", e => { if (e.target.id === "modal") closeConfirm(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeConfirm(); });
@@ -854,6 +952,7 @@ function orderText(){
     `お名前：${S.name}`,
     S.phone ? `電話番号：${S.phone}` : "",
     S.line ? `LINE表示名：${S.line}` : "",
+    addrText() ? `住所：${addrText()}` : "",
     S.email ? `メール：${S.email}` : "",
     S.note ? `ご要望・お問い合わせ：${S.note}` : ""
   ].filter(Boolean).join("\n");
@@ -865,7 +964,12 @@ function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("sh
 function bind(){
   const stepOf = id => ALL.find(it => it.id === id).step;
   document.querySelectorAll("[data-inc]").forEach(b => b.onclick = () => {
-    const id = b.dataset.inc; S.qty[id] = Math.min(CONFIG.maxPerItem, S.qty[id] + stepOf(id)); render();
+    const id = b.dataset.inc, before = S.qty[id];
+    S.qty[id] = Math.min(CONFIG.maxPerItem, S.qty[id] + stepOf(id)); render();
+    const it = ALL.find(x => x.id === id);
+    if (before === 0 && !it.frozen && CONFIG.lateGrades.includes(it.grade)) {
+      return showNotice(CONFIG.lateNote, `[data-inc="${id}"]`);
+    }
     document.querySelector(`[data-inc="${id}"]:not(:disabled)`)?.focus() || document.querySelector(`[data-dec="${id}"]`)?.focus();
   });
   document.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => {
@@ -882,6 +986,15 @@ function bind(){
     if (S.tried) el.closest(".field").classList.toggle("bad", !valid()[keyFor[id]]);
   };}
   const nt=$("#fNote"); if(nt) nt.oninput = () => { S.note = nt.value; };
+  const zp=$("#fZip");
+  if (zp){
+    zp.oninput = () => { S.zip = zp.value; if (normZip(zp.value).length === 7) fillAddress(); };
+    $("#zipBtn").onclick = fillAddress;
+    for (const k of ["addr1","addr2"]){
+      const el = $(k === "addr1" ? "#fAddr1" : "#fAddr2");
+      el.oninput = () => { S[k] = el.value; if (S.tried) el.closest(".field").classList.toggle("bad", !valid()[k]); };
+    }
+  }
   document.querySelectorAll('input[name="first"]').forEach(r => r.onchange = () => {
     S.first = r.value;
     const pos = window.scrollY; render(); window.scrollTo({top:pos});
@@ -896,7 +1009,7 @@ function bind(){
   };
   const rs=$("#restart"); if(rs) rs.onclick = () => {
     Object.keys(S.qty).forEach(k=>S.qty[k]=0);
-    Object.assign(S,{step:1,date:null,slot:null,note:"",first:"",name:"",phone:"",line:"",email:"",pref:"",agree:false,tried:false});
+    Object.assign(S,{step:1,date:null,slot:null,note:"",first:"",name:"",phone:"",line:"",email:"",pref:"",agree:false,tried:false,zip:"",addr1:"",addr2:""});
     render(); window.scrollTo({top:0});
   };
 }
