@@ -371,6 +371,7 @@ const CONFIG = {
     "f-1kg":"冷凍いちご",
   },
   undecidedNote: "価格未定です。もうしばらくお待ちください。お待たせして申し訳ありません。",
+  harvestNote:   "年明け以降の発送となる見込みです。申し訳ありません。",   // 価格表に「収穫前」とある規格
   monthlyPrices: {},   // 読み込み後に { "2026-12":[…], … } の形で入ります
   leadDays: 1,
   closedWeekdays: [],
@@ -379,9 +380,6 @@ const CONFIG = {
 
   payNote: "",   // お支払い方法の案内（空なら表示しません）
 
-  // 数量を入れ始めたときに注意を出す規格（あまおう・白いちご共通）
-  lateGrades: ["2L","L","M","S"],
-  lateNote: "2L～S規格は年明け以降の発送となる見込みです。あらかじめご了承ください。",
 
   // 受注を書き込むスプレッドシートの送信先（Apps Script のウェブアプリURL）
   sheetEndpoint: "https://script.google.com/macros/s/AKfycbzIGeQlb9U3IZWKYJy1kmgNaheFRy8M5wLqliMFigIno8zBDvQ5c7jzZCi45_j6jbH1/exec",
@@ -471,7 +469,7 @@ async function loadPrices(){
 }
 // 価格未定の商品が選ばれていたら外す（日付を変えたとき用）
 function dropUndecided(){
-  ALL.forEach(it => { if (priceOf(it) == null) S.qty[it.id] = 0; });
+  ALL.forEach(it => { if (!isPriced(priceOf(it))) S.qty[it.id] = 0; });
 }
 
 const ALL = CONFIG.groups.flatMap(g => g.items.map(it => ({...it, group:g})));
@@ -496,7 +494,8 @@ const showMonths = () => Object.keys(CONFIG.monthlyPrices).sort().filter(k => {
   const [y,m] = k.split("-").map(Number); return new Date(y, m, 0) >= firstDay;
 });
 // その月に1つでも価格が決まっていれば受付する（全部未定・表にない月は受付なし）
-const monthOpen = key => { const r = CONFIG.monthlyPrices[key]; return !!r && r.some(v => v != null); };
+const isPriced = v => typeof v === "number";   // 数字＝注文可 ／ "harvest"＝収穫前 ／ null＝未定
+const monthOpen = key => { const r = CONFIG.monthlyPrices[key]; return !!r && r.some(isPriced); };
 const isOpen = d => d >= firstDay && d <= lastDay && monthOpen(monthKey(d)) &&
   !CONFIG.closedWeekdays.includes(d.getDay()) && !CONFIG.closedDates.includes(ymd(d));
 const label = it => {
@@ -633,11 +632,11 @@ function viewProducts(){
           <div>
             <div class="grade">${esc(it.grade)}</div>
             <div class="spec">${esc(it.spec)}</div>
-            ${priceOf(it) == null
-              ? `<p class="undecided">${esc(CONFIG.undecidedNote)}</p>`
+            ${!isPriced(priceOf(it))
+              ? `<p class="undecided">${esc(priceOf(it) === "harvest" ? CONFIG.harvestNote : CONFIG.undecidedNote)}</p>`
               : `<div class="pline"><span class="gprice">${yen(priceOf(it))}<small>／${esc(u)}（税込）</small></span><span class="unitnote">${it.step}${esc(u)}単位</span></div>`}
           </div>
-          ${priceOf(it) == null ? "" : `<div class="stepper">
+          ${!isPriced(priceOf(it)) ? "" : `<div class="stepper">
             <button class="minus" data-dec="${it.id}" ${q===0?"disabled":""} aria-label="${esc(label(it))}を${it.step}${esc(u)}減らす">−</button>
             <output aria-live="polite">${q}<small>${esc(u)}</small></output>
             <button data-inc="${it.id}" ${q+it.step>CONFIG.maxPerItem?"disabled":""} aria-label="${esc(label(it))}を${it.step}${esc(u)}増やす">＋</button>
@@ -1027,12 +1026,8 @@ function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("sh
 function bind(){
   const stepOf = id => ALL.find(it => it.id === id).step;
   document.querySelectorAll("[data-inc]").forEach(b => b.onclick = () => {
-    const id = b.dataset.inc, before = S.qty[id];
+    const id = b.dataset.inc;
     S.qty[id] = Math.min(CONFIG.maxPerItem, S.qty[id] + stepOf(id)); render();
-    const it = ALL.find(x => x.id === id);
-    if (before === 0 && !it.frozen && CONFIG.lateGrades.includes(it.grade) && S.date < new Date(2027,0,1)) {
-      return showNotice(CONFIG.lateNote, `[data-inc="${id}"]`);
-    }
     document.querySelector(`[data-inc="${id}"]:not(:disabled)`)?.focus() || document.querySelector(`[data-dec="${id}"]`)?.focus();
   });
   document.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => {
