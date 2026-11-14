@@ -461,7 +461,8 @@ async function loadPrices(){
     lastDay = new Date(last[0], last[1], 0);
     const firstOpen = Object.keys(mp).sort().filter(monthOpen).map(k => k.split("-").map(Number)).map(([y,m]) => new Date(y, m-1, 1))
       .find(d => new Date(d.getFullYear(), d.getMonth()+1, 0) >= firstDay);
-    if (firstOpen && !S.date) S.month = firstOpen > firstDay ? firstOpen : new Date(firstDay.getFullYear(), firstDay.getMonth(), 1);
+    const startKey = firstOpen ? monthKey(firstOpen) : showMonths()[0];
+    if (startKey && !S.date){ const [sy,sm] = startKey.split("-").map(Number); S.month = new Date(sy, sm-1, 1); }
     priceState = "ok";
   } catch (e) {
     priceState = "error";
@@ -490,6 +491,10 @@ const priceOf = it => {
   return row ? row[ALL.findIndex(x => x.id === it.id)] : null;
 };
 const subtotal = () => items().reduce((a,it) => a + S.qty[it.id]*priceOf(it), 0);
+// カレンダーに出す月：価格表にあり、まだ終わっていない月
+const showMonths = () => Object.keys(CONFIG.monthlyPrices).sort().filter(k => {
+  const [y,m] = k.split("-").map(Number); return new Date(y, m, 0) >= firstDay;
+});
 // その月に1つでも価格が決まっていれば受付する（全部未定・表にない月は受付なし）
 const monthOpen = key => { const r = CONFIG.monthlyPrices[key]; return !!r && r.some(v => v != null); };
 const isOpen = d => d >= firstDay && d <= lastDay && monthOpen(monthKey(d)) &&
@@ -654,8 +659,9 @@ function viewProducts(){
 function viewDate(){
   const m = S.month, y = m.getFullYear(), mo = m.getMonth();
   const start = new Date(y, mo, 1), days = new Date(y, mo+1, 0).getDate();
-  const canPrev = new Date(y, mo, 0) >= new Date(firstDay.getFullYear(), firstDay.getMonth(), 1);
-  const canNext = new Date(y, mo+1, 1) <= lastDay;
+  // 価格表にある月（今日以降）だけを行き来できる
+  const canPrev = showMonths().includes(monthKey(new Date(y, mo-1, 1)));
+  const canNext = showMonths().includes(monthKey(new Date(y, mo+1, 1)));
   let cells = WD.map((w,i) => `<div class="wd ${i===0?"sun":i===6?"sat":""}">${w}</div>`).join("");
   for (let i=0;i<start.getDay();i++) cells += "<div></div>";
   for (let d=1; d<=days; d++){
