@@ -372,7 +372,7 @@ const CONFIG = {
   },
   undecidedNote: "価格未定です。もうしばらくお待ちください。お待たせして申し訳ありません。",
   harvestNote:   "年明け以降の発送となる見込みです。申し訳ありません。",   // 価格表に「収穫前」とある規格
-  monthlyPrices: {},   // 読み込み後に { "2026-12":[…], … } の形で入ります
+  pricePeriods: [],   // 読み込み後に [{ start:日付, end:日付, row:[各商品の価格] }, …] の形で入ります
   leadDays: 1,
   closedWeekdays: [],
   closedDates: [],
@@ -382,7 +382,7 @@ const CONFIG = {
 
 
   // 受注を書き込むスプレッドシートの送信先（Apps Script のウェブアプリURL）
-  sheetEndpoint: "https://script.google.com/macros/s/AKfycbzIGeQlb9U3IZWKYJy1kmgNaheFRy8M5wLqliMFigIno8zBDvQ5c7jzZCi45_j6jbH1/exec",
+  sheetEndpoint: "https://script.google.com/macros/s/AKfycbyBOWKOqPknYUFl0o4Xz3bZ24Oip6Wv7rrWKxE3N6b6V-SorPkwxTezj1i8wVV09VM_/exec",
 
   // 公式LINEのID（友だち追加ボタンに使います）
   lineOaId: "@607dzdfb",
@@ -445,22 +445,46 @@ async function loadPrices(){
     const res = await fetch(CONFIG.sheetEndpoint + "?action=prices");
     const data = await res.json();
     const tbl = data && data.wholesale;
-    if (!tbl || !tbl.months || !tbl.months.length) throw new Error("no table");
+    if (tbl && !tbl.periods && tbl.months)   // 古い形式（○月だけ）の応答にも対応
+      tbl.periods = tbl.months.map(m => ({ sm:m, sd:1, em:m, ed:0 }));
+    if (!tbl || !tbl.periods || !tbl.periods.length) throw new Error("no table");
     const rows = {}; Object.keys(tbl.prices).forEach(k => rows[normName(k)] = tbl.prices[k]);
-    const nowY = today.getFullYear(), nowM = today.getMonth() + 1;
-    const mp = {};
-    tbl.months.forEach((m, mi) => {
-      const y = m >= nowM ? nowY : nowY + 1;   // 今月より前の月は翌年扱い（12月→1月→2月）
-      const key = `${y}-${String(m).padStart(2,"0")}`;
-      mp[key] = ALL.map(it => { const r = rows[normName(CONFIG.priceRows[it.id] || "")]; return r ? r[mi] : null; });
+
+    // 価格表の見出し（○月○日）に年を付ける。表は左から日付順に並んでいる前提で、
+    // 最初の列は今日に一番近い年、それ以降は日付が前に戻ったら翌年とする
+    const half = 183 * 86400000;
+    let y = today.getFullYear();
+    const f0 = tbl.periods[0];
+    if (new Date(y, f0.sm-1, f0.sd) - today >  half) y--;
+    if (today - new Date(y, f0.sm-1, f0.sd) >  half) y++;
+    let prev = null;
+    const periods = tbl.periods.map((p, i) => {
+      let start = new Date(y, p.sm-1, p.sd);
+      if (prev && start < prev){ y++; start = new Date(y, p.sm-1, p.sd); }
+      prev = start;
+      let end = null;
+      if (p.em){   // ed が 0 のときはその月の末日
+        const mk = yy => p.ed ? new Date(yy, p.em-1, p.ed) : new Date(yy, p.em, 0);
+        end = mk(y); if (end < start) end = mk(y+1);
+      }
+      const row = ALL.map(it => { const r = rows[normName(CONFIG.priceRows[it.id] || "")]; return r ? r[i] : null; });
+      return { start, end, row };
     });
-    CONFIG.monthlyPrices = mp;
-    const last = Object.keys(mp).sort().pop().split("-").map(Number);
-    lastDay = new Date(last[0], last[1], 0);
-    const firstOpen = Object.keys(mp).sort().filter(monthOpen).map(k => k.split("-").map(Number)).map(([y,m]) => new Date(y, m-1, 1))
-      .find(d => new Date(d.getFullYear(), d.getMonth()+1, 0) >= firstDay);
-    const startKey = firstOpen ? monthKey(firstOpen) : showMonths()[0];
-    if (startKey && !S.date){ const [sy,sm] = startKey.split("-").map(Number); S.month = new Date(sy, sm-1, 1); }
+    // 終わりの日付がない列は「次の列の前日まで」、最後の列は「その月の末日まで」
+    periods.forEach((p, i) => {
+      if (p.end) return;
+      const nx = periods[i+1];
+      p.end = nx ? new Date(nx.start.getFullYear(), nx.start.getMonth(), nx.start.getDate() - 1)
+                 : new Date(p.start.getFullYear(), p.start.getMonth() + 1, 0);
+    });
+    CONFIG.pricePeriods = periods;
+    lastDay = new Date(Math.max(...periods.map(p => p.end)));
+
+    if (!S.date){
+      const keys = showMonths();
+      const startKey = keys.find(monthOpen) || keys[0];
+      if (startKey){ const [sy,sm] = startKey.split("-").map(Number); S.month = new Date(sy, sm-1, 1); }
+    }
     priceState = "ok";
   } catch (e) {
     priceState = "error";
@@ -485,19 +509,37 @@ const unitOf = it => it.unit || CONFIG.unit;
 const items = () => ALL.filter(it => S.qty[it.id] > 0);
 const count = () => items().length;
 const priceOf = it => {
-  const row = S.date && CONFIG.monthlyPrices[monthKey(S.date)];
+  const per = S.date && periodOf(S.date);
+  const row = per && per.row;
   return row ? row[ALL.findIndex(x => x.id === it.id)] : null;
 };
 const subtotal = () => items().reduce((a,it) => a + S.qty[it.id]*priceOf(it), 0);
 // カレンダーに出す月：価格表にあり、まだ終わっていない月
-const showMonths = () => Object.keys(CONFIG.monthlyPrices).sort().filter(k => {
-  const [y,m] = k.split("-").map(Number); return new Date(y, m, 0) >= firstDay;
-});
-// その月に1つでも価格が決まっていれば受付する（全部未定・表にない月は受付なし）
+// その日に当てはまる価格表の列
+const periodOf = d => CONFIG.pricePeriods.find(p => d >= p.start && d <= p.end);
+// カレンダーに出す月：価格表の期間にかかっていて、まだ終わっていない月
+const showMonths = () => {
+  const keys = new Set();
+  CONFIG.pricePeriods.forEach(p => {
+    for (let d = new Date(p.start.getFullYear(), p.start.getMonth(), 1); d <= p.end; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)){
+      if (new Date(d.getFullYear(), d.getMonth() + 1, 0) >= firstDay) keys.add(monthKey(d));
+    }
+  });
+  return [...keys].sort();
+};
 const isPriced = v => typeof v === "number";   // 数字＝注文可 ／ "harvest"＝収穫前 ／ null＝未定
-const monthOpen = key => { const r = CONFIG.monthlyPrices[key]; return !!r && r.some(isPriced); };
-const isOpen = d => d >= firstDay && d <= lastDay && monthOpen(monthKey(d)) &&
-  !CONFIG.closedWeekdays.includes(d.getDay()) && !CONFIG.closedDates.includes(ymd(d));
+// その日に1つでも価格が決まっていれば受付する（全部未定・価格表の期間外の日は受付なし）
+const isOpen = d => {
+  const per = d >= firstDay && d <= lastDay && periodOf(d);
+  return !!per && per.row.some(isPriced) &&
+    !CONFIG.closedWeekdays.includes(d.getDay()) && !CONFIG.closedDates.includes(ymd(d));
+};
+// その月に受付できる日が1日でもあるか
+const monthOpen = key => {
+  const [y,m] = key.split("-").map(Number), n = new Date(y, m, 0).getDate();
+  for (let d = 1; d <= n; d++) if (isOpen(new Date(y, m-1, d))) return true;
+  return false;
+};
 const label = it => {
   if (it.frozen) return it.grade;
   const g = it.group || CONFIG.groups.find(g => g.items.some(x => x.id === it.id));
